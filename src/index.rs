@@ -1,8 +1,8 @@
+use crate::paths::validate_file_path;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
-use crate::paths::validate_file_path;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -93,22 +93,20 @@ impl ModrinthIndex {
     }
 
     pub fn mods(&self) -> impl Iterator<Item = ModInfo> + '_ {
-        self.files
-            .iter()
-            .filter_map(|file| {
-                let filename = file.path.rsplit('/').next()?;
-                let (name, extension) = filename.rsplit_once('.')?;
+        self.files.iter().filter_map(|file| {
+            let filename = file.path.rsplit('/').next()?;
+            let (name, extension) = filename.rsplit_once('.')?;
 
-                if !extension.eq_ignore_ascii_case("jar") {
-                    return None;
-                }
+            if !extension.eq_ignore_ascii_case("jar") {
+                return None;
+            }
 
-                Some(ModInfo {
-                    name,
-                    client: &file.env.client,
-                    server: &file.env.server,
-                })
+            Some(ModInfo {
+                name,
+                client: &file.env.client,
+                server: &file.env.server,
             })
+        })
     }
     pub fn name(&self) -> &str {
         self.name.as_str()
@@ -257,7 +255,10 @@ mod tests {
         ] {
             let index = index_with_file_path(path);
 
-            assert!(index.validate().is_err(), "expected {path:?} to be rejected");
+            assert!(
+                index.validate().is_err(),
+                "expected {path:?} to be rejected"
+            );
         }
     }
 

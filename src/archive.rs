@@ -1,11 +1,15 @@
+use crate::index::ModrinthIndex;
+use crate::paths::{normalize_file_path, validate_file_path};
 use anyhow::{Context, bail};
 use std::collections::HashMap;
 use std::fs::File;
+use std::io::Read;
 use std::path::Path;
 use std::{fs, io};
 use zip::ZipArchive;
-use crate::index::ModrinthIndex;
-use crate::paths::{normalize_file_path, validate_file_path};
+
+const TOTAL_SIZE_LIMIT: u64 = 25_000_000;
+const TOTAL_FILE_SIZE_LIMIT: u64 = 10_000_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EntryKind {
@@ -21,6 +25,7 @@ pub fn extract_mrpack(archive_path: &Path, output_dir: &Path) -> anyhow::Result<
     let mut archive = ZipArchive::new(file)?;
 
     let mut seen_paths: SeenPaths = HashMap::new();
+    let mut total_uncompressed_bytes = 0u64;
 
     // Preflight: reject unsafe entries before creating or writing output files.
     for i in 0..archive.len() {
@@ -44,11 +49,31 @@ pub fn extract_mrpack(archive_path: &Path, output_dir: &Path) -> anyhow::Result<
 
         register_path(&mut seen_paths, path_to_validate, entry.is_dir())
             .with_context(|| format!("checking archive entry {entry_name:?}"))?;
+
+        let entry_size = entry.size();
+        if entry_size > TOTAL_FILE_SIZE_LIMIT {
+            bail!(
+                "archive entry {entry_name:?} is {entry_size} bytes, exceeding the per-file limit of {TOTAL_FILE_SIZE_LIMIT} bytes by {} bytes",
+                entry_size - TOTAL_FILE_SIZE_LIMIT
+            );
+        }
+
+        total_uncompressed_bytes = total_uncompressed_bytes
+            .checked_add(entry_size)
+            .context("total uncompressed archive size overflow")?;
+    }
+
+    if total_uncompressed_bytes > TOTAL_SIZE_LIMIT {
+        bail!(
+            "total uncompressed archive size is {total_uncompressed_bytes} bytes, exceeding the limit of {TOTAL_SIZE_LIMIT} bytes by {} bytes",
+            total_uncompressed_bytes - TOTAL_SIZE_LIMIT
+        );
     }
 
     // Extraction: preflight succeeded, so now it's safe to create output.
     fs::create_dir_all(output_dir)?;
 
+    let mut actual_total_bytes = 0u64;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
 
@@ -65,7 +90,35 @@ pub fn extract_mrpack(archive_path: &Path, output_dir: &Path) -> anyhow::Result<
                 fs::create_dir_all(parent)?;
             }
             let mut output = File::create(&destination)?;
-            io::copy(&mut entry, &mut output)?;
+            let declared_size = entry.size();
+            let remaining_total_limit = TOTAL_SIZE_LIMIT - actual_total_bytes;
+            let copy_limit = TOTAL_FILE_SIZE_LIMIT.min(remaining_total_limit);
+
+            let copied_bytes = {
+                let mut limited_entry = (&mut entry).take(copy_limit);
+                io::copy(&mut limited_entry, &mut output)?
+            };
+
+            if copied_bytes == copy_limit {
+                let mut extra_byte = [0u8; 1];
+                if entry.read(&mut extra_byte)? != 0 {
+                    bail!(
+                        "archive entry {:?} exceeds the extraction size limit",
+                        entry.name()?
+                    );
+                }
+            }
+
+            if copied_bytes != declared_size {
+                bail!(
+                    "archive entry {:?} declared {declared_size} bytes but extracted {copied_bytes} bytes",
+                    entry.name()?
+                );
+            }
+
+            actual_total_bytes = actual_total_bytes
+                .checked_add(copied_bytes)
+                .context("actual extracted archive size overflow")?;
         }
     }
 
@@ -84,11 +137,7 @@ pub fn read_index(archive_path: &Path) -> anyhow::Result<ModrinthIndex> {
     Ok(index)
 }
 
-fn register_path(
-    paths: &mut SeenPaths,
-    path: &str,
-    is_dir: bool,
-) -> anyhow::Result<()> {
+fn register_path(paths: &mut SeenPaths, path: &str, is_dir: bool) -> anyhow::Result<()> {
     let key = normalize_file_path(path);
     let kind = if is_dir {
         EntryKind::Directory
@@ -113,9 +162,7 @@ fn register_path(
             parent.push_str(component);
 
             if let Some((EntryKind::File, previous_name)) = paths.get(&parent) {
-                anyhow::bail!(
-                    "archive path {path:?} requires {previous_name:?} to be a directory"
-                );
+                anyhow::bail!("archive path {path:?} requires {previous_name:?} to be a directory");
             }
         }
     }
@@ -129,9 +176,7 @@ fn register_path(
             .find(|(existing, _)| existing.starts_with(&child_prefix))
             .map(|(_, value)| value)
         {
-            anyhow::bail!(
-                "archive file {path:?} conflicts with child entry {previous_name:?}"
-            );
+            anyhow::bail!("archive file {path:?} conflicts with child entry {previous_name:?}");
         }
     }
 
@@ -157,9 +202,7 @@ mod tests {
         writer
             .start_file("config/server.properties", options)
             .expect("start file entry");
-        writer
-            .write_all(b"motd=test")
-            .expect("write file contents");
+        writer.write_all(b"motd=test").expect("write file contents");
 
         if include_unsafe_entry {
             writer
@@ -184,6 +227,27 @@ mod tests {
             } else {
                 writer.start_file(*name, options).expect("add file");
                 writer.write_all(b"test").expect("write file contents");
+            }
+        }
+
+        writer.finish().expect("finish test archive");
+    }
+
+    fn write_sized_archive(path: &Path, entries: &[(&str, u64)]) {
+        let file = File::create(path).expect("create test archive");
+        let mut writer = ZipWriter::new(file);
+        let options = SimpleFileOptions::default();
+        let block = [0u8; 64 * 1024];
+
+        for (name, size) in entries {
+            writer.start_file(*name, options).expect("add file");
+            let mut remaining = *size;
+            while remaining > 0 {
+                let chunk_size = remaining.min(block.len() as u64) as usize;
+                writer
+                    .write_all(&block[..chunk_size])
+                    .expect("write file contents");
+                remaining -= chunk_size as u64;
             }
         }
 
@@ -224,6 +288,50 @@ mod tests {
         assert!(extract_mrpack(&archive_path, &output_dir).is_err());
         assert!(!output_dir.exists());
         assert!(!temp.path().join("outside.txt").exists());
+    }
+
+    #[test]
+    fn rejects_entry_over_per_file_size_limit_before_creating_output() {
+        let temp = tempdir().expect("create temporary directory");
+        let archive_path = temp.path().join("oversized-file.mrpack");
+        let output_dir = temp.path().join("output");
+        write_sized_archive(
+            &archive_path,
+            &[("large.bin", TOTAL_FILE_SIZE_LIMIT + 1)],
+        );
+
+        let error = extract_mrpack(&archive_path, &output_dir).unwrap_err();
+
+        assert!(error.to_string().contains("exceeding the per-file limit"));
+        assert!(error.to_string().contains("1 bytes"));
+        assert!(!output_dir.exists());
+    }
+
+    #[test]
+    fn rejects_archive_over_total_size_limit_before_creating_output() {
+        let temp = tempdir().expect("create temporary directory");
+        let archive_path = temp.path().join("oversized-total.mrpack");
+        let output_dir = temp.path().join("output");
+        let third_file_size = TOTAL_SIZE_LIMIT - 2 * TOTAL_FILE_SIZE_LIMIT + 1;
+        write_sized_archive(
+            &archive_path,
+            &[
+                ("first.bin", TOTAL_FILE_SIZE_LIMIT),
+                ("second.bin", TOTAL_FILE_SIZE_LIMIT),
+                ("third.bin", third_file_size),
+            ],
+        );
+
+        let error = extract_mrpack(&archive_path, &output_dir).unwrap_err();
+
+        assert!(error.to_string().contains("exceeding the limit"));
+        assert!(
+            error
+                .to_string()
+                .contains(&(TOTAL_SIZE_LIMIT + 1).to_string())
+        );
+        assert!(error.to_string().contains("by 1 bytes"));
+        assert!(!output_dir.exists());
     }
 
     #[test]
