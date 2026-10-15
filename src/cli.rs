@@ -123,7 +123,6 @@ fn _extract(pack: &Path, output_dir: &Path) -> anyhow::Result<()> {
     // With the pack validated, extract it in the out-dir
     extract_mrpack(&pack, &output_dir)?;
     println!("Extracted {} to {}", pack.display(), output_dir.display());
-    println!("Pack: {}", index);
 
     Ok(())
 }
