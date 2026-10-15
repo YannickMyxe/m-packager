@@ -32,3 +32,14 @@ pub fn extract_mrpack(archive_path: &Path, output_dir: &Path) -> anyhow::Result<
 
     Ok(())
 }
+
+pub fn read_index(archive_path: &Path) -> anyhow::Result<serde_json::Value> {
+    let file =
+        File::open(archive_path).with_context(|| format!("opening {}", archive_path.display()))?;
+    let mut archive = ZipArchive::new(file)?;
+    let index_file = archive
+        .by_name("modrinth.index.json")
+        .context("finding modrinth.index.json in archive")?;
+
+    serde_json::from_reader(index_file).context("parsing modrinth.index.json")
+}
