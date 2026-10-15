@@ -1,6 +1,7 @@
 use crate::archive::{extract_mrpack, read_index};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
+use crate::index::ModrinthIndex;
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Utilities for installing Minecraft modpacks")]
@@ -37,8 +38,7 @@ fn _extract(pack: &Path, output_dir: &Path) -> anyhow::Result<()> {
     let index = read_index(pack)?;
     extract_mrpack(&pack, &output_dir)?;
     println!("Extracted {} to {}", pack.display(), output_dir.display());
-
-    println!("{}", serde_json::to_string_pretty(&index)?);
+    println!("Pack data: {}", index);
 
     Ok(())
 }

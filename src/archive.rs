@@ -3,6 +3,7 @@ use std::fs::File;
 use std::path::Path;
 use std::{fs, io};
 use zip::ZipArchive;
+use crate::index::ModrinthIndex;
 
 pub fn extract_mrpack(archive_path: &Path, output_dir: &Path) -> anyhow::Result<()> {
     let file =
@@ -33,7 +34,7 @@ pub fn extract_mrpack(archive_path: &Path, output_dir: &Path) -> anyhow::Result<
     Ok(())
 }
 
-pub fn read_index(archive_path: &Path) -> anyhow::Result<serde_json::Value> {
+pub fn read_index(archive_path: &Path) -> anyhow::Result<ModrinthIndex> {
     let file =
         File::open(archive_path).with_context(|| format!("opening {}", archive_path.display()))?;
     let mut archive = ZipArchive::new(file)?;
@@ -41,5 +42,6 @@ pub fn read_index(archive_path: &Path) -> anyhow::Result<serde_json::Value> {
         .by_name("modrinth.index.json")
         .context("finding modrinth.index.json in archive")?;
 
-    serde_json::from_reader(index_file).context("parsing modrinth.index.json")
+    let index: ModrinthIndex = serde_json::from_reader(index_file)?;
+    Ok(index)
 }
