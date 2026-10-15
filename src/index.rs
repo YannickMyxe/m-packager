@@ -58,7 +58,7 @@ impl ModrinthIndex {
 
         for dependency in ["minecraft", "neoforge"] {
             match self.dependencies.get(dependency) {
-                Some(version) if !version.is_empty() => {}
+                Some(version) if !version.trim().is_empty() => {}
                 _ => anyhow::bail!("Missing or empty required dependency `{dependency}`"),
             }
         }
@@ -137,7 +137,10 @@ mod tests {
             "game": game,
             "name": "Test pack",
             "versionId": "1",
-            "dependencies": {},
+            "dependencies": {
+                "minecraft": "unknown version",
+                "neoforge": "unknown version",
+            },
             "files": []
         }))
             .expect("test JSON should deserialize")
@@ -160,6 +163,22 @@ mod tests {
     #[test]
     fn rejects_unsupported_game() {
         let index = index_with(1, "some-other-game");
+
+        assert!(index.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_missing_minecraft_dependency() {
+        let mut index = index_with(1, "minecraft");
+        index.dependencies.remove("minecraft");
+
+        assert!(index.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_empty_neoforge_version() {
+        let mut index = index_with(1, "minecraft");
+        index.dependencies.insert("neoforge".to_string(), "".to_string());
 
         assert!(index.validate().is_err());
     }
