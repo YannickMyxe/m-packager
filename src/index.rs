@@ -65,9 +65,27 @@ impl ModrinthIndex {
 
         Ok(())
     }
-    
+
     pub fn dependencies(&self) -> &HashMap<String, String> {
         &self.dependencies
+    }
+
+    pub fn mods(&self) -> impl Iterator<Item = &str> + '_ {
+        self.files.iter().filter_map(|file| {
+            let filename = file.path.rsplit('/').next()?;
+            filename.strip_suffix(".jar")
+        })
+    }
+    pub fn name(&self) -> &str {
+        self.name.as_str()
+    }
+
+    pub fn version(&self) -> &str {
+        self.version_id.as_str()
+    }
+
+    pub fn summary(&self) -> Option<&str> {
+        self.summary.as_deref()
     }
 }
 

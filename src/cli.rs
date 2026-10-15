@@ -27,6 +27,17 @@ enum Commands {
         #[arg(long, visible_alias = "mc-version")]
         minecraft_version: Option<String>,
     },
+    /// Shows the mrpack's name, version and summary with optional flags for showing mods
+    Info {
+        /// Path to the .mrpack file
+        pack: PathBuf,
+        /// If mods should be printed or not
+        #[arg(long, short = 'm')]
+        mods: bool,
+        /// If it should only print the Minecraft and mod-loader versions
+        #[arg(long, short = 's')]
+        short: bool,
+    },
 }
 
 pub fn run() -> anyhow::Result<()> {
@@ -47,6 +58,9 @@ pub fn run() -> anyhow::Result<()> {
                 _validate(&pack)?;
             }
         },
+        Commands::Info { pack, mods, short } => {
+            _info(&pack, mods, short)?;
+        }
     }
 
     Ok(())
@@ -85,6 +99,42 @@ fn _extract(pack: &Path, output_dir: &Path) -> anyhow::Result<()> {
     extract_mrpack(&pack, &output_dir)?;
     println!("Extracted {} to {}", pack.display(), output_dir.display());
     println!("Pack: {}", index);
+
+    Ok(())
+}
+
+fn _info(pack: &Path, mods: bool, short: bool) -> anyhow::Result<()> {
+    let index = read_index(pack)?;
+    index.validate()?;
+
+    let deps = index.dependencies();
+    match (deps.get("minecraft"), deps.get("neoforge")) {
+        (None, None) => {
+            anyhow::bail!("Minecraft & NeoForge versions not found");
+        }
+        (None, Some(_)) => {
+            anyhow::bail!("Minecraft version not found");
+        }
+        (Some(_), None) => {
+            anyhow::bail!("NeoForge version not found");
+        }
+        (Some(mc_version), Some(neoforge_version)) => {
+            if !short {
+                println!("{} {}", index.name(), index.version());
+                if let Some(summary) = index.summary() {
+                    println!("Summary: {summary}");
+                }
+            }
+            println!("Minecraft: {mc_version}, NeoForge: {neoforge_version}");
+            if mods {
+                let mods = index.mods();
+                println!("Mods:");
+                for m in mods {
+                    println!("{m}");
+                }
+            }
+        }
+    }
 
     Ok(())
 }
