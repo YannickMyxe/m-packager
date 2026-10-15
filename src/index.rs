@@ -18,9 +18,9 @@ pub struct ModrinthIndex {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ModrinthIndexFile {
-    downloads: Vec<serde_json::Value>,
+    downloads: Vec<String>,
     env: ModrinthIndexEnv,
-    hashes: HashMap<String, String>,
+    hashes: ModrinthHashes,
     path: String,
 }
 
@@ -37,6 +37,12 @@ pub enum EnvironmentSupport {
     Required,
     Optional,
     Unsupported,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct ModrinthHashes {
+    sha1: String,
+    sha512: String,
 }
 
 impl fmt::Display for ModrinthIndex {
@@ -58,9 +64,11 @@ impl fmt::Display for ModrinthIndex {
 impl fmt::Display for ModrinthIndexFile {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         writeln!(f, "Path: {}", self.path)?;
-        writeln!(f, "Download items: {}", self.downloads.len())?;
-        writeln!(f, "Env items: {}", self.env)?;
-        writeln!(f, "Hashes items: {}", self.hashes.len())?;
+        for download in &self.downloads {
+            writeln!(f, "{}", download)?;
+        }
+        writeln!(f, "Env: {}", self.env)?;
+        writeln!(f, "Hashes: {}", self.hashes)?;
         Ok(())
     }
 }
@@ -80,5 +88,12 @@ impl fmt::Display for EnvironmentSupport {
             EnvironmentSupport::Unsupported => "Unsupported",
         };
         write!(f, "{}", label)
+    }
+}
+
+impl fmt::Display for ModrinthHashes {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        writeln!(f, "sha1: {}", self.sha1)?;
+        write!(f, "sha512: {}", self.sha512)
     }
 }
