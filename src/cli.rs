@@ -35,7 +35,11 @@ pub fn run() -> anyhow::Result<()> {
 }
 
 fn _extract(pack: &Path, output_dir: &Path) -> anyhow::Result<()> {
+    // First validate the index before extracting
     let index = read_index(pack)?;
+    index.validate()?;
+    
+    // With the pack validated, extract it in the out-dir
     extract_mrpack(&pack, &output_dir)?;
     println!("Extracted {} to {}", pack.display(), output_dir.display());
     println!("Pack data: {}", index);

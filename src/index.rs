@@ -46,6 +46,20 @@ struct ModrinthHashes {
     sha512: String,
 }
 
+impl ModrinthIndex {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.format_version != 1 {
+            anyhow::bail!("Unsupported modrinth format version, we only supports version 1, {}", self.format_version);
+        }
+
+        if self.game != "minecraft" {
+            anyhow::bail!("Unsupported game, we only support minecraft, {}", self.game);
+        }
+
+        Ok(())
+    }
+}
+
 impl fmt::Display for ModrinthIndex {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         writeln!(f, "{}, version: {}", self.name, self.version_id)?;
