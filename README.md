@@ -40,6 +40,8 @@ This keeps the host setup lightweight:
 
 The installer image needs to be maintained, and the installer needs network access and write access to the mounted directory. The installer and server containers must agree on the directory layout and compatible Java version.
 
+The repository should provide and maintain the installer image's `Dockerfile` as part of the project. A Docker Compose example can be provided as a template for users to adapt to their volume paths, image choices, and server settings. The installer should not generate or modify Dockerfiles at runtime.
+
 Run the installer explicitly as a one-shot container or Compose service, wait for it to finish successfully, and then start the server container. Do not reinstall the pack automatically on every server-container startup. Restarting the server only uses the already-installed files. To change packs or apply updates, run the installer again as a separate operation; update support should stage changes and back up the existing server before applying them.
 
 ## Backups and updates
@@ -118,6 +120,7 @@ Build and verify a usable installer in small end-to-end increments. The first mi
 ### 7. Package and test the one-shot Docker workflow
 
 - Create an installer image with `m-packager` and the required Java runtime.
+- Maintain the installer `Dockerfile` in the repository and provide a Compose example users can adapt.
 - Document the pack mount, destination mount, permissions, and network access needed by the installer.
 - Run the installer as an explicit one-shot command or Compose service; start the server container only after installation succeeds.
 - Mount the same persistent server directory into the server container. Keep installation out of the server container's normal restart path.
