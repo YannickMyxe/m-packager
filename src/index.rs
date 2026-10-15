@@ -56,6 +56,13 @@ impl ModrinthIndex {
             anyhow::bail!("Unsupported game, we only support minecraft, {}", self.game);
         }
 
+        for dependency in ["minecraft", "neoforge"] {
+            match self.dependencies.get(dependency) {
+                Some(version) if !version.is_empty() => {}
+                _ => anyhow::bail!("Missing or empty required dependency `{dependency}`"),
+            }
+        }
+
         Ok(())
     }
 }
