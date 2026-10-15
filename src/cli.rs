@@ -1,7 +1,6 @@
 use crate::archive::{extract_mrpack, read_index};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
-use crate::index::ModrinthIndex;
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Utilities for installing Minecraft modpacks")]
@@ -24,7 +23,10 @@ enum Commands {
     Validate {
         /// Path to the .mrpack file
         pack: PathBuf,
-    }
+        /// Minecraft version to compare with the pack
+        #[arg(long, visible_alias = "mc-version")]
+        minecraft_version: Option<String>,
+    },
 }
 
 pub fn run() -> anyhow::Result<()> {
@@ -34,9 +36,17 @@ pub fn run() -> anyhow::Result<()> {
         Commands::Extract { pack, output } => {
             _extract(&pack, &output)?;
         }
-        Commands::Validate { pack } => {
-            _validate(&pack)?;
-        }
+        Commands::Validate {
+            pack,
+            minecraft_version,
+        } => match minecraft_version {
+            Some(minecraft_version) => {
+                _validate_with_minecraft_version(&pack, minecraft_version)?;
+            }
+            None => {
+                _validate(&pack)?;
+            }
+        },
     }
 
     Ok(())
@@ -46,6 +56,23 @@ fn _validate(pack: &PathBuf) -> anyhow::Result<()> {
     let index = read_index(pack)?;
     index.validate()?;
     println!("Modpack validated successfully");
+    Ok(())
+}
+
+fn _validate_with_minecraft_version(pack: &PathBuf, mc_version: String) -> anyhow::Result<()> {
+    let index = read_index(pack)?;
+    index.validate()?;
+    match index.dependencies().get("minecraft") {
+        Some(version) => {
+            if version != &mc_version {
+                anyhow::bail!(
+                    "Minecraft version do not match, expected: {mc_version}, but the pack supports {version}"
+                )
+            }
+        }
+        None => anyhow::bail!("Minecraft version not found"),
+    }
+    println!("Modpack validated successfully, confirmed Minecraft version {mc_version}");
     Ok(())
 }
 

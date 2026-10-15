@@ -65,6 +65,10 @@ impl ModrinthIndex {
 
         Ok(())
     }
+    
+    pub fn dependencies(&self) -> &HashMap<String, String> {
+        &self.dependencies
+    }
 }
 
 impl fmt::Display for ModrinthIndex {
