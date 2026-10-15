@@ -72,6 +72,10 @@ impl ModrinthIndex {
             }
         }
 
+        for file in &self.files {
+            validate_file_path(&file.path)?;
+        }
+
         Ok(())
     }
 
@@ -97,7 +101,7 @@ impl ModrinthIndex {
                 if !extension.eq_ignore_ascii_case("jar") {
                     return None;
                 }
-                
+
                 Some(ModInfo {
                     name,
                     client: &file.env.client,
@@ -116,6 +120,21 @@ impl ModrinthIndex {
     pub fn summary(&self) -> Option<&str> {
         self.summary.as_deref()
     }
+}
+
+fn validate_file_path(path: &str) -> anyhow::Result<()> {
+    if path.is_empty()
+        || path.starts_with('/')
+        || path.contains('\\')
+        || path.contains(':')
+        || path
+            .split('/')
+            .any(|component| component.is_empty() || component == "." || component == "..")
+    {
+        anyhow::bail!("unsafe file path in modrinth.index.json: {path:?}");
+    }
+
+    Ok(())
 }
 
 impl fmt::Display for ModrinthIndex {
@@ -197,11 +216,63 @@ mod tests {
         .expect("test JSON should deserialize")
     }
 
+    fn index_with_file_path(path: &str) -> ModrinthIndex {
+        serde_json::from_value(serde_json::json!({
+            "formatVersion": 1,
+            "game": "minecraft",
+            "name": "Test pack",
+            "versionId": "1",
+            "dependencies": {
+                "minecraft": "1.21",
+                "neoforge": "21.1.1",
+            },
+            "files": [{
+                "downloads": [],
+                "env": {
+                    "server": "required",
+                    "client": "required",
+                },
+                "hashes": {
+                    "sha1": "abc",
+                    "sha512": "def",
+                },
+                "path": path,
+                "fileSize": 0,
+            }]
+        }))
+        .expect("test JSON should deserialize")
+    }
+
     #[test]
     fn accepts_supported_index() {
         let index = index_with(1, "minecraft");
 
         assert!(index.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_safe_indexed_file_path() {
+        let index = index_with_file_path("mods/example.jar");
+
+        assert!(index.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_unsafe_indexed_file_paths() {
+        for path in [
+            "",
+            "../outside.jar",
+            "mods/../../outside.jar",
+            "/absolute.jar",
+            r"mods\outside.jar",
+            "C:/outside.jar",
+            "mods//example.jar",
+            "mods/./example.jar",
+        ] {
+            let index = index_with_file_path(path);
+
+            assert!(index.validate().is_err(), "expected {path:?} to be rejected");
+        }
     }
 
     #[test]
