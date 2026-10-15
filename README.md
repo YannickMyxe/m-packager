@@ -16,65 +16,31 @@
 
 The installer should treat archives and paths as untrusted input: reject paths that escape the destination, limit unreasonable extraction sizes, and avoid silently overwriting unrelated files. A failed install should not leave a partially installed server in the target directory.
 
-## Docker deployment options
+## Docker deployment
 
-Both approaches can work. They differ in where the installer runs and what has to be installed on the host.
-
-### Option A: Run the installer in a one-shot Docker container (recommended)
-
-Build or pull an installer image containing `m-packager` and a compatible Java runtime. Run it with the `.mrpack` file and persistent server directory mounted into the container. Once installation succeeds, start the existing Minecraft server container with that same server directory mounted.
+The chosen approach is to run `m-packager` in a one-shot installer container. Mount the `.mrpack` file and persistent server directory into it. The installer reads the local pack once for that installation, then downloads the indexed mod and other files into the server directory. It does not need to download the `.mrpack` itself. Once installation succeeds, start the Minecraft server container with that same server directory mounted.
 
 ```text
-modpack.mrpack ──mounted──> installer container
-                                  │
-                           prepares server files
-                                  ▼
-                           persistent volume
-                                  │
-                                  ▼
-                            server container
+local modpack.mrpack ──mounted──> one-shot installer container
+                                           │
+                     downloads and verifies indexed files
+                                           ▼
+                                  persistent volume
+                                           │
+                                           ▼
+                                    server container
 ```
 
-**Advantages**
+This keeps the host setup lightweight:
 
 - The host does not need Rust or Java installed.
 - The installer and server can use a controlled, documented Java version.
 - The server files live outside the container image, so replacing/restarting a container does not discard the world or configuration.
 - Installation is a separate, explicit operation rather than something that unexpectedly runs on every server restart.
 
-**Trade-offs**
+The installer image needs to be maintained, and the installer needs network access and write access to the mounted directory. The installer and server containers must agree on the directory layout and compatible Java version.
 
-- The installer image and its Java version need to be maintained.
-- The installer needs network access and write access to the mounted directory.
-- The installer and server containers must agree on the directory layout and compatible Java version.
-
-This should be a one-shot install/update command or Compose service that runs to completion before the server starts. It should not reinstall the pack automatically on every server-container startup. A later update flow should stage changes and back up the existing server before applying them.
-
-### Option B: Run the installer on the host before starting Docker
-
-Install or build `m-packager` on the host and run it against the server directory that Docker will mount as a volume. Then start the server container as usual.
-
-```text
-modpack.mrpack ──> m-packager on host ──> server directory/volume ──> server container
-```
-
-**Advantages**
-
-- No separate installer container or image is needed.
-- The install step is straightforward to run locally or from a deployment script.
-- The generated server files can be inspected directly on the host before starting the server.
-
-**Trade-offs**
-
-- The host needs the installer and any runtime dependencies required for server setup, especially a compatible Java runtime.
-- Different host operating systems and Java installations can make setup less consistent.
-- File permissions and ownership must be compatible with the user running the server container.
-
-### Recommendation
-
-Use **Option A** if Docker is the normal way this server is deployed. It keeps installation dependencies out of the host and makes the runtime environment easier to reproduce. Choose **Option B** if you already manage Java and server files on the host, or want the simplest local development workflow.
-
-Either way, use a persistent directory/volume shared with the server container. Install explicitly, and initially require a new or empty destination rather than modifying an existing server in place.
+Run the installer explicitly as a one-shot container or Compose service, wait for it to finish successfully, and then start the server container. Do not reinstall the pack automatically on every server-container startup. Restarting the server only uses the already-installed files. To change packs or apply updates, run the installer again as a separate operation; update support should stage changes and back up the existing server before applying them.
 
 ## Backups and updates
 
@@ -91,15 +57,79 @@ When updates are implemented, the recommended behavior is to:
 
 Copy scripts and configuration files included in the pack as files, subject to the same safe-path checks. Do not automatically execute arbitrary scripts supplied by a pack. The installer may generate its own loader-appropriate start script or command. If pack-script execution is supported later, it should require an explicit opt-in and clearly show what will run.
 
-## Initial implementation scope
+## Step-by-step project plan
 
-- Command-line installer; no TUI required for the first version.
-- Read loader and Minecraft versions from the pack manifest.
-- Start with the current NeoForge pack/use case.
-- Install into a new or empty directory.
-- Apply overrides and server overrides.
-- Download and verify server-compatible indexed files.
-- Install the declared Minecraft/NeoForge server files and provide a launch command.
-- Add tests for malformed archives, unsafe paths, hash/size mismatches, and failed/interrupted downloads.
+Build and verify a usable installer in small end-to-end increments. The first milestone is an install-only CLI for the current NeoForge pack, run explicitly in a one-shot container. Do not start with a TUI, in-place updates, or automatic pack-script execution.
 
-Optional-file selection, in-place updates, backups, and additional loaders can follow once the first end-to-end NeoForge install works.
+### 1. Define and inspect the real pack
+
+- Keep a representative `.mrpack` available for local testing; do not commit a large pack or copyrighted mod files to the repository.
+- Inspect its `modrinth.index.json`, archive entries, overrides, server overrides, and optional/server support flags.
+- Confirm the expected Minecraft and NeoForge versions, Java runtime requirement, and how the server should be launched.
+- Record the decisions as testable acceptance criteria before implementing the installer.
+
+**Done when:** the input format and expected output for this pack are understood, including which files should and should not be installed.
+
+### 2. Establish the Rust CLI and test structure
+
+- Choose a small CLI interface, for example `m-packager install <pack.mrpack> --destination <directory>`.
+- Add clear help and error output, and return a non-zero exit code on failure.
+- Organize the code into focused areas for CLI handling, pack/index parsing, safe file operations, downloads, and loader setup.
+- Add unit and integration test scaffolding, using small synthetic archives instead of distributing real mod files.
+
+**Done when:** the command parses arguments and reports invalid input clearly, with tests runnable through Cargo.
+
+### 3. Read and validate the pack
+
+- Open the `.mrpack` as a ZIP and parse `modrinth.index.json`.
+- Validate the supported index format and required fields, including Minecraft and loader dependencies.
+- Use the manifest's loader and version as the default; initially support the NeoForge path needed by the current pack.
+- Interpret file server-support and environment metadata according to the pack format. Make the initial optional-file behavior explicit.
+- Reject unsafe paths, duplicate/conflicting entries, and unreasonable archive sizes before writing files.
+
+**Done when:** valid fixture packs produce a validated install plan, while malformed or unsafe packs fail before changing the destination.
+
+### 4. Install pack-provided files and indexed downloads
+
+- Build the install in a staging directory rather than writing a partial result directly into the final destination.
+- Apply `overrides/`, followed by `server-overrides/`.
+- Download eligible indexed files to temporary files; enforce size limits and verify declared hashes and sizes before accepting them.
+- Report which files are downloaded, skipped, or rejected. Do not silently treat failed downloads as success.
+
+**Done when:** tests cover successful downloads, hash/size mismatches, unsupported files, interrupted requests, override precedence, and unsafe paths.
+
+### 5. Set up the Minecraft and NeoForge server
+
+- Install the Minecraft and NeoForge server components matching the manifest using their supported installation process.
+- Make Java requirements explicit and verify that the runtime available to the installer/server is compatible.
+- Generate or document a loader-appropriate start command. Do not execute scripts supplied by the pack.
+- Make the required EULA action clear to the operator; do not accept it on the user's behalf.
+
+**Done when:** a completed install can launch the target pack's server using the generated/documented command and the operator's required setup steps are clear.
+
+### 6. Commit a successful install safely
+
+- Initially require a new or empty destination; never silently overwrite an existing server.
+- After all downloads, checks, and server setup succeed, move the staged install into place.
+- On failure, report the cause and clean up only the installer's own staging data, leaving existing user data untouched.
+
+**Done when:** integration tests prove a failed install does not leave a partial server or alter an existing destination.
+
+### 7. Package and test the one-shot Docker workflow
+
+- Create an installer image with `m-packager` and the required Java runtime.
+- Document the pack mount, destination mount, permissions, and network access needed by the installer.
+- Run the installer as an explicit one-shot command or Compose service; start the server container only after installation succeeds.
+- Mount the same persistent server directory into the server container. Keep installation out of the server container's normal restart path.
+- Test the full workflow: install once, start the server, restart it without reinstalling, and confirm the installed files and world persist.
+
+**Done when:** the documented Docker workflow can install the representative pack and start its server from a persistent volume.
+
+### 8. Add updates and backups only after initial installs work
+
+- Design updates separately from first-time installation.
+- Back up the existing server by default, stage and verify the update, and preserve worlds and user-edited configuration.
+- Add an explicit opt-out such as `--no-backup` only when the backup workflow is implemented and tested.
+- Consider caching, optional-file selection, more loaders, and a TUI based on real usage needs.
+
+**Done when:** an update can be safely applied and recovered from, with tests proving backup, preservation, and failure behavior.
