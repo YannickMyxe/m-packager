@@ -1,6 +1,7 @@
 use crate::archive::{extract_mrpack, read_index};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
+use crate::index::EnvironmentSupport;
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Utilities for installing Minecraft modpacks")]
@@ -124,8 +125,10 @@ fn _info(pack: &Path, mods: bool, short: bool) -> anyhow::Result<()> {
     if mods {
         let mods = index.mods();
         println!("Mods:");
-        for m in mods {
-            println!("{m}");
+        for m in mods.filter(|m| {
+            !matches!(m.server, &EnvironmentSupport::Unsupported)
+        }) {
+            println!("{} (server: {})", m.name, m.server);
         }
     }
 

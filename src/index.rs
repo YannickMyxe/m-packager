@@ -46,6 +46,12 @@ struct ModrinthHashes {
     sha512: String,
 }
 
+pub struct ModInfo<'a> {
+    pub name: &'a str,
+    pub client: &'a EnvironmentSupport,
+    pub server: &'a EnvironmentSupport,
+}
+
 impl ModrinthIndex {
     pub fn validate(&self) -> anyhow::Result<()> {
         if self.format_version != 1 {
@@ -81,18 +87,22 @@ impl ModrinthIndex {
         self.dependencies.get("neoforge").map(String::as_str)
     }
 
-    pub fn mods(&self) -> impl Iterator<Item = &str> + '_ {
+    pub fn mods(&self) -> impl Iterator<Item = ModInfo> + '_ {
         self.files
             .iter()
-            .filter(|file| {
-                // Filter all unsupported mods out
-                !matches!(&file.env.server, EnvironmentSupport::Unsupported)
-            })
             .filter_map(|file| {
                 let filename = file.path.rsplit('/').next()?;
                 let (name, extension) = filename.rsplit_once('.')?;
 
-                extension.eq_ignore_ascii_case("jar").then_some(name)
+                if !extension.eq_ignore_ascii_case("jar") {
+                    return None;
+                }
+                
+                Some(ModInfo {
+                    name,
+                    client: &file.env.client,
+                    server: &file.env.server,
+                })
             })
     }
     pub fn name(&self) -> &str {
