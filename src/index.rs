@@ -22,6 +22,7 @@ pub struct ModrinthIndexFile {
     env: ModrinthIndexEnv,
     hashes: ModrinthHashes,
     path: String,
+    file_size: u64,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -64,6 +65,7 @@ impl fmt::Display for ModrinthIndex {
 impl fmt::Display for ModrinthIndexFile {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         writeln!(f, "Path: {}", self.path)?;
+        writeln!(f, "Size: {} bytes", self.file_size)?;
         for download in &self.downloads {
             writeln!(f, "{}", download)?;
         }
