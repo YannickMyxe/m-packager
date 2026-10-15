@@ -1,15 +1,26 @@
 use anyhow::{Context, bail};
+use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 use std::{fs, io};
 use zip::ZipArchive;
 use crate::index::ModrinthIndex;
-use crate::paths::validate_file_path;
+use crate::paths::{normalize_file_path, validate_file_path};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EntryKind {
+    File,
+    Directory,
+}
+
+type SeenPaths = HashMap<String, (EntryKind, String)>;
 
 pub fn extract_mrpack(archive_path: &Path, output_dir: &Path) -> anyhow::Result<()> {
     let file =
         File::open(archive_path).with_context(|| format!("opening {}", archive_path.display()))?;
     let mut archive = ZipArchive::new(file)?;
+
+    let mut seen_paths: SeenPaths = HashMap::new();
 
     // Preflight: reject unsafe entries before creating or writing output files.
     for i in 0..archive.len() {
@@ -30,6 +41,9 @@ pub fn extract_mrpack(archive_path: &Path, output_dir: &Path) -> anyhow::Result<
 
         validate_file_path(path_to_validate)
             .with_context(|| format!("validating archive entry {entry_name:?}"))?;
+
+        register_path(&mut seen_paths, path_to_validate, entry.is_dir())
+            .with_context(|| format!("checking archive entry {entry_name:?}"))?;
     }
 
     // Extraction: preflight succeeded, so now it's safe to create output.
@@ -70,6 +84,61 @@ pub fn read_index(archive_path: &Path) -> anyhow::Result<ModrinthIndex> {
     Ok(index)
 }
 
+fn register_path(
+    paths: &mut SeenPaths,
+    path: &str,
+    is_dir: bool,
+) -> anyhow::Result<()> {
+    let key = normalize_file_path(path);
+    let kind = if is_dir {
+        EntryKind::Directory
+    } else {
+        EntryKind::File
+    };
+
+    // Any second entry for the same case-insensitive path is a conflict.
+    if let Some((_, previous_name)) = paths.get(&key) {
+        anyhow::bail!("duplicate archive path: {path:?} conflicts with {previous_name:?}");
+    }
+
+    // A file cannot be an ancestor of another entry:
+    // `config` as a file conflicts with `config/settings.txt`.
+    let mut parent = String::new();
+    let mut components = key.split('/').peekable();
+    while let Some(component) = components.next() {
+        if components.peek().is_some() {
+            if !parent.is_empty() {
+                parent.push('/');
+            }
+            parent.push_str(component);
+
+            if let Some((EntryKind::File, previous_name)) = paths.get(&parent) {
+                anyhow::bail!(
+                    "archive path {path:?} requires {previous_name:?} to be a directory"
+                );
+            }
+        }
+    }
+
+    // The reverse order also matters: a file cannot replace a directory
+    // path already needed by one of its children.
+    if kind == EntryKind::File {
+        let child_prefix = format!("{key}/");
+        if let Some((_, previous_name)) = paths
+            .iter()
+            .find(|(existing, _)| existing.starts_with(&child_prefix))
+            .map(|(_, value)| value)
+        {
+            anyhow::bail!(
+                "archive file {path:?} conflicts with child entry {previous_name:?}"
+            );
+        }
+    }
+
+    paths.insert(key, (kind, path.to_owned()));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,6 +173,33 @@ mod tests {
         writer.finish().expect("finish test archive");
     }
 
+    fn write_path_entries(path: &Path, entries: &[(&str, bool)]) {
+        let file = File::create(path).expect("create test archive");
+        let mut writer = ZipWriter::new(file);
+        let options = SimpleFileOptions::default();
+
+        for (name, is_dir) in entries {
+            if *is_dir {
+                writer.add_directory(*name, options).expect("add directory");
+            } else {
+                writer.start_file(*name, options).expect("add file");
+                writer.write_all(b"test").expect("write file contents");
+            }
+        }
+
+        writer.finish().expect("finish test archive");
+    }
+
+    fn assert_conflicting_archive_is_rejected(entries: &[(&str, bool)]) {
+        let temp = tempdir().expect("create temporary directory");
+        let archive_path = temp.path().join("conflict.mrpack");
+        let output_dir = temp.path().join("output");
+        write_path_entries(&archive_path, entries);
+
+        assert!(extract_mrpack(&archive_path, &output_dir).is_err());
+        assert!(!output_dir.exists());
+    }
+
     #[test]
     fn extracts_directory_entries() {
         let temp = tempdir().expect("create temporary directory");
@@ -128,5 +224,29 @@ mod tests {
         assert!(extract_mrpack(&archive_path, &output_dir).is_err());
         assert!(!output_dir.exists());
         assert!(!temp.path().join("outside.txt").exists());
+    }
+
+    #[test]
+    fn rejects_case_insensitive_duplicate_paths() {
+        assert_conflicting_archive_is_rejected(&[
+            ("Config/settings.txt", false),
+            ("config/SETTINGS.txt", false),
+        ]);
+    }
+
+    #[test]
+    fn rejects_file_directory_collision_when_file_comes_first() {
+        assert_conflicting_archive_is_rejected(&[
+            ("config", false),
+            ("config/settings.txt", false),
+        ]);
+    }
+
+    #[test]
+    fn rejects_file_directory_collision_when_child_comes_first() {
+        assert_conflicting_archive_is_rejected(&[
+            ("config/settings.txt", false),
+            ("config", false),
+        ]);
     }
 }

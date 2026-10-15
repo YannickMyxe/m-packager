@@ -13,3 +13,7 @@ pub fn validate_file_path(path: &str) -> anyhow::Result<()> {
 
     Ok(())
 }
+
+pub fn normalize_file_path(path: &str) -> String {
+    path.to_lowercase()
+}
