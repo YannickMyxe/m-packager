@@ -49,7 +49,10 @@ struct ModrinthHashes {
 impl ModrinthIndex {
     pub fn validate(&self) -> anyhow::Result<()> {
         if self.format_version != 1 {
-            anyhow::bail!("Unsupported modrinth format version, we only supports version 1, {}", self.format_version);
+            anyhow::bail!(
+                "Unsupported modrinth format version, we only supports version 1, {}",
+                self.format_version
+            );
         }
 
         if self.game != "minecraft" {
@@ -70,11 +73,27 @@ impl ModrinthIndex {
         &self.dependencies
     }
 
+    pub fn minecraft_version(&self) -> Option<&str> {
+        self.dependencies.get("minecraft").map(String::as_str)
+    }
+
+    pub fn neoforge_version(&self) -> Option<&str> {
+        self.dependencies.get("neoforge").map(String::as_str)
+    }
+
     pub fn mods(&self) -> impl Iterator<Item = &str> + '_ {
-        self.files.iter().filter_map(|file| {
-            let filename = file.path.rsplit('/').next()?;
-            filename.strip_suffix(".jar")
-        })
+        self.files
+            .iter()
+            .filter(|file| {
+                // Filter all unsupported mods out
+                !matches!(&file.env.server, EnvironmentSupport::Unsupported)
+            })
+            .filter_map(|file| {
+                let filename = file.path.rsplit('/').next()?;
+                let (name, extension) = filename.rsplit_once('.')?;
+
+                extension.eq_ignore_ascii_case("jar").then_some(name)
+            })
     }
     pub fn name(&self) -> &str {
         self.name.as_str()
@@ -165,7 +184,7 @@ mod tests {
             },
             "files": []
         }))
-            .expect("test JSON should deserialize")
+        .expect("test JSON should deserialize")
     }
 
     #[test]
@@ -200,7 +219,9 @@ mod tests {
     #[test]
     fn rejects_empty_neoforge_version() {
         let mut index = index_with(1, "minecraft");
-        index.dependencies.insert("neoforge".to_string(), "".to_string());
+        index
+            .dependencies
+            .insert("neoforge".to_string(), "".to_string());
 
         assert!(index.validate().is_err());
     }

@@ -107,32 +107,25 @@ fn _info(pack: &Path, mods: bool, short: bool) -> anyhow::Result<()> {
     let index = read_index(pack)?;
     index.validate()?;
 
-    let deps = index.dependencies();
-    match (deps.get("minecraft"), deps.get("neoforge")) {
-        (None, None) => {
-            anyhow::bail!("Minecraft & NeoForge versions not found");
+    let minecraft = index
+        .minecraft_version()
+        .ok_or_else(|| anyhow::anyhow!("Minecraft version not found"))?;
+    let neoforge = index
+        .neoforge_version()
+        .ok_or_else(|| anyhow::anyhow!("NeoForge version not found"))?;
+
+    if !short {
+        println!("{} {}", index.name(), index.version());
+        if let Some(summary) = index.summary() {
+            println!("Summary: {summary}");
         }
-        (None, Some(_)) => {
-            anyhow::bail!("Minecraft version not found");
-        }
-        (Some(_), None) => {
-            anyhow::bail!("NeoForge version not found");
-        }
-        (Some(mc_version), Some(neoforge_version)) => {
-            if !short {
-                println!("{} {}", index.name(), index.version());
-                if let Some(summary) = index.summary() {
-                    println!("Summary: {summary}");
-                }
-            }
-            println!("Minecraft: {mc_version}, NeoForge: {neoforge_version}");
-            if mods {
-                let mods = index.mods();
-                println!("Mods:");
-                for m in mods {
-                    println!("{m}");
-                }
-            }
+    }
+    println!("Minecraft: {minecraft}, NeoForge: {neoforge}");
+    if mods {
+        let mods = index.mods();
+        println!("Mods:");
+        for m in mods {
+            println!("{m}");
         }
     }
 
