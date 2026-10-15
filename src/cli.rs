@@ -20,6 +20,11 @@ enum Commands {
         #[arg(short, long)]
         output: PathBuf,
     },
+    /// Validate an .mrpack archive and check if it supports the correct version and game
+    Validate {
+        /// Path to the .mrpack file
+        pack: PathBuf,
+    }
 }
 
 pub fn run() -> anyhow::Result<()> {
@@ -29,8 +34,18 @@ pub fn run() -> anyhow::Result<()> {
         Commands::Extract { pack, output } => {
             _extract(&pack, &output)?;
         }
+        Commands::Validate { pack } => {
+            _validate(&pack)?;
+        }
     }
 
+    Ok(())
+}
+
+fn _validate(pack: &PathBuf) -> anyhow::Result<()> {
+    let index = read_index(pack)?;
+    index.validate()?;
+    println!("Modpack validated successfully");
     Ok(())
 }
 
