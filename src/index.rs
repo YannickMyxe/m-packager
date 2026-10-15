@@ -2,6 +2,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
+use crate::paths::validate_file_path;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -120,21 +121,6 @@ impl ModrinthIndex {
     pub fn summary(&self) -> Option<&str> {
         self.summary.as_deref()
     }
-}
-
-fn validate_file_path(path: &str) -> anyhow::Result<()> {
-    if path.is_empty()
-        || path.starts_with('/')
-        || path.contains('\\')
-        || path.contains(':')
-        || path
-            .split('/')
-            .any(|component| component.is_empty() || component == "." || component == "..")
-    {
-        anyhow::bail!("unsafe file path in modrinth.index.json: {path:?}");
-    }
-
-    Ok(())
 }
 
 impl fmt::Display for ModrinthIndex {
