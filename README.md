@@ -8,11 +8,14 @@
 2. Determine the Minecraft version and mod loader/version from the manifest. The manifest is the default source of truth; for a NeoForge pack, the installer should use the declared NeoForge version rather than ask the user to choose an unrelated loader.
 3. Create a staging directory and install the server files:
    - Extract pack `overrides/`, then apply `server-overrides/` so server-specific files take precedence.
-   - Download files listed in the index from their declared URLs, skipping files marked unsupported on servers. Optional files should have a documented default and may be made selectable.
+   - Copy configuration and other files from both override directories into the server directory, with `server-overrides/` taking precedence.
+   - Download required files listed in the index from their declared URLs, skipping files marked unsupported on servers. Do not include optional files by default; provide an explicit way to include optional content.
    - Verify downloaded files against the manifest's hashes and sizes before accepting them.
    - Obtain the Minecraft server and loader files for the declared versions, using the loader's supported server installation process.
-4. Produce a launch command or script appropriate for that loader and Java version.
+4. Produce and document a launch command or script appropriate for that loader and Java version. It starts the installed server; it does not install the pack, accept the EULA, or execute pack-supplied scripts.
 5. Install into a new or empty server directory initially. Do not replace an existing server or execute arbitrary scripts from a pack automatically.
+
+An install is successful when the installer has staged and verified the selected files, prepared the loader's server files and launch instructions, and safely committed the result to the destination. Starting Minecraft is not part of installation success. The operator must explicitly accept the EULA before starting the server; the installer must not accept it on the operator's behalf.
 
 The installer should treat archives and paths as untrusted input: reject paths that escape the destination, limit unreasonable extraction sizes, and avoid silently overwriting unrelated files. A failed install should not leave a partially installed server in the target directory.
 
@@ -38,9 +41,9 @@ This keeps the host setup lightweight:
 - The server files live outside the container image, so replacing/restarting a container does not discard the world or configuration.
 - Installation is a separate, explicit operation rather than something that unexpectedly runs on every server restart.
 
-The installer image needs to be maintained, and the installer needs network access and write access to the mounted directory. The installer and server containers must agree on the directory layout and compatible Java version.
+The project maintains the installer's `Dockerfile`; users should not need to build or run the Rust application on the host. The installer image needs network access and write access to the mounted directory. The installer and server containers must agree on the directory layout and compatible Java version.
 
-The repository should provide and maintain the installer image's `Dockerfile` as part of the project. A Docker Compose example can be provided as a template for users to adapt to their volume paths, image choices, and server settings. The installer should not generate or modify Dockerfiles at runtime.
+A Docker Compose example is a template for users to adapt to their server image, volume paths, and settings. It should leave EULA acceptance false by default, requiring the operator to change it to true before starting the server. The installer should not generate or modify Dockerfiles at runtime.
 
 Run the installer explicitly as a one-shot container or Compose service, wait for it to finish successfully, and then start the server container. Do not reinstall the pack automatically on every server-container startup. Restarting the server only uses the already-installed files. To change packs or apply updates, run the installer again as a separate operation; update support should stage changes and back up the existing server before applying them.
 
@@ -68,9 +71,11 @@ Build and verify a usable installer in small end-to-end increments. The first mi
 - Keep a representative `.mrpack` available for local testing; do not commit a large pack or copyrighted mod files to the repository.
 - Inspect its `modrinth.index.json`, archive entries, overrides, server overrides, and optional/server support flags.
 - Confirm the expected Minecraft and NeoForge versions, Java runtime requirement, and how the server should be launched.
-- Record the decisions as testable acceptance criteria before implementing the installer.
+- Define required-only as the default; optional files are included only through an explicit user choice.
+- Treat pack configuration and other override files as server files to install, applying `server-overrides/` after `overrides/`.
+- Define success as verified files plus prepared server components and launch/EULA instructions; starting the server is not required.
 
-**Done when:** the input format and expected output for this pack are understood, including which files should and should not be installed.
+**Done when:** the input format and expected output for this pack are understood, including which files should be installed by default, which are optional or server-unsupported, and how overrides affect the result.
 
 ### 2. Establish the Rust CLI and test structure
 
@@ -86,7 +91,7 @@ Build and verify a usable installer in small end-to-end increments. The first mi
 - Open the `.mrpack` as a ZIP and parse `modrinth.index.json`.
 - Validate the supported index format and required fields, including Minecraft and loader dependencies.
 - Use the manifest's loader and version as the default; initially support the NeoForge path needed by the current pack.
-- Interpret file server-support and environment metadata according to the pack format. Make the initial optional-file behavior explicit.
+- Interpret file server-support and environment metadata according to the pack format. Install required server-supported files by default; optional files require an explicit user choice.
 - Reject unsafe paths, duplicate/conflicting entries, and unreasonable archive sizes before writing files.
 
 **Done when:** valid fixture packs produce a validated install plan, while malformed or unsafe packs fail before changing the destination.
@@ -94,7 +99,8 @@ Build and verify a usable installer in small end-to-end increments. The first mi
 ### 4. Install pack-provided files and indexed downloads
 
 - Build the install in a staging directory rather than writing a partial result directly into the final destination.
-- Apply `overrides/`, followed by `server-overrides/`.
+- Copy configuration and other files from `overrides/`, followed by `server-overrides/`, into the server directory.
+- Support an explicit optional-file inclusion choice; never install server-unsupported files.
 - Download eligible indexed files to temporary files; enforce size limits and verify declared hashes and sizes before accepting them.
 - Report which files are downloaded, skipped, or rejected. Do not silently treat failed downloads as success.
 
@@ -104,10 +110,9 @@ Build and verify a usable installer in small end-to-end increments. The first mi
 
 - Install the Minecraft and NeoForge server components matching the manifest using their supported installation process.
 - Make Java requirements explicit and verify that the runtime available to the installer/server is compatible.
-- Generate or document a loader-appropriate start command. Do not execute scripts supplied by the pack.
-- Make the required EULA action clear to the operator; do not accept it on the user's behalf.
+- Generate or document a loader-appropriate start command and the operator's first-start steps. Do not execute scripts supplied by the pack or accept the EULA on the user's behalf.
 
-**Done when:** a completed install can launch the target pack's server using the generated/documented command and the operator's required setup steps are clear.
+**Done when:** the installer prepares the server components, provides a usable launch command and clear EULA instructions, and does not need to start Minecraft to report installation success.
 
 ### 6. Commit a successful install safely
 
@@ -124,6 +129,7 @@ Build and verify a usable installer in small end-to-end increments. The first mi
 - Document the pack mount, destination mount, permissions, and network access needed by the installer.
 - Run the installer as an explicit one-shot command or Compose service; start the server container only after installation succeeds.
 - Mount the same persistent server directory into the server container. Keep installation out of the server container's normal restart path.
+- Set EULA acceptance to false in the Compose example by default; the operator must change it to true before starting the server.
 - Test the full workflow: install once, start the server, restart it without reinstalling, and confirm the installed files and world persist.
 
 **Done when:** the documented Docker workflow can install the representative pack and start its server from a persistent volume.
@@ -133,6 +139,6 @@ Build and verify a usable installer in small end-to-end increments. The first mi
 - Design updates separately from first-time installation.
 - Back up the existing server by default, stage and verify the update, and preserve worlds and user-edited configuration.
 - Add an explicit opt-out such as `--no-backup` only when the backup workflow is implemented and tested.
-- Consider caching, optional-file selection, more loaders, and a TUI based on real usage needs.
+- Consider caching, more loaders, and a TUI based on real usage needs.
 
 **Done when:** an update can be safely applied and recovered from, with tests proving backup, preservation, and failure behavior.
