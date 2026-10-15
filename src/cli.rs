@@ -1,13 +1,25 @@
 use crate::archive::{extract_mrpack, read_index};
+use crate::index::{EnvironmentSupport, ModInfo};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
-use crate::index::EnvironmentSupport;
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Utilities for installing Minecraft modpacks")]
 struct Cli {
     #[command(subcommand)]
     pub(crate) command: Commands,
+}
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum ModSort {
+    Name,
+    ServerSupport,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum, Default)]
+enum SortOrder {
+    #[default]
+    Asc,
+    Desc,
 }
 
 #[derive(Debug, Subcommand)]
@@ -38,6 +50,12 @@ enum Commands {
         /// If it should only print the Minecraft and mod-loader versions
         #[arg(long, short = 's')]
         short: bool,
+        ///
+        #[arg(long, value_enum, requires = "mods")]
+        sort: Option<ModSort>,
+        ///
+        #[arg(long, value_enum, requires = "sort", default_value_t = SortOrder::Asc)]
+        order: SortOrder,
     },
 }
 
@@ -59,8 +77,14 @@ pub fn run() -> anyhow::Result<()> {
                 _validate(&pack)?;
             }
         },
-        Commands::Info { pack, mods, short } => {
-            _info(&pack, mods, short)?;
+        Commands::Info {
+            pack,
+            mods,
+            short,
+            sort,
+            order,
+        } => {
+            _info(&pack, mods, short, sort, order)?;
         }
     }
 
@@ -104,7 +128,13 @@ fn _extract(pack: &Path, output_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn _info(pack: &Path, mods: bool, short: bool) -> anyhow::Result<()> {
+fn _info(
+    pack: &Path,
+    mods: bool,
+    short: bool,
+    sort: Option<ModSort>,
+    order: SortOrder,
+) -> anyhow::Result<()> {
     let index = read_index(pack)?;
     index.validate()?;
 
@@ -123,14 +153,41 @@ fn _info(pack: &Path, mods: bool, short: bool) -> anyhow::Result<()> {
     }
     println!("Minecraft: {minecraft}, NeoForge: {neoforge}");
     if mods {
-        let mods = index.mods();
+        let mut mods: Vec<ModInfo> = index
+            .mods()
+            .filter(|m| !matches!(m.server, EnvironmentSupport::Unsupported))
+            .collect();
+        if let Some(sort_by) = sort {
+            mods.sort_by(|a, b| {
+                let ordering = match sort_by {
+                    ModSort::Name => a
+                        .name
+                        .to_ascii_lowercase()
+                        .cmp(&b.name.to_ascii_lowercase()),
+                    ModSort::ServerSupport => _support_rank(a.server)
+                        .cmp(&_support_rank(b.server))
+                        .then_with(|| a.name.cmp(b.name)),
+                };
+
+                match order {
+                    SortOrder::Asc => ordering,
+                    SortOrder::Desc => ordering.reverse(),
+                }
+            });
+        }
         println!("Mods:");
-        for m in mods.filter(|m| {
-            !matches!(m.server, &EnvironmentSupport::Unsupported)
-        }) {
+        for m in mods {
             println!("{} (server: {})", m.name, m.server);
         }
     }
 
     Ok(())
+}
+
+fn _support_rank(support: &EnvironmentSupport) -> u8 {
+    match support {
+        EnvironmentSupport::Required => 0,
+        EnvironmentSupport::Optional => 1,
+        EnvironmentSupport::Unsupported => 2,
+    }
 }
