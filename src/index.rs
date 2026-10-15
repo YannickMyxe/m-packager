@@ -66,6 +66,12 @@ impl fmt::Display for ModrinthIndex {
         if let Some(summary) = self.summary.as_ref() {
             writeln!(f, "{}", summary)?;
         }
+        writeln!(f, "Dependencies:")?;
+        for (key, value) in self.dependencies.iter() {
+            write!(f, "{{ {}: {} }}, ", key, value)?;
+        }
+        writeln!(f, "")?;
+        writeln!(f, "Files:")?;
         if !self.files.is_empty() {
             for (index, file) in self.files.iter().enumerate() {
                 writeln!(f, "[{}]: {}", index, file)?;
@@ -111,5 +117,43 @@ impl fmt::Display for ModrinthHashes {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         writeln!(f, "sha1: {}", self.sha1)?;
         write!(f, "sha512: {}", self.sha512)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn index_with(format_version: u32, game: &str) -> ModrinthIndex {
+        serde_json::from_value(serde_json::json!({
+            "formatVersion": format_version,
+            "game": game,
+            "name": "Test pack",
+            "versionId": "1",
+            "dependencies": {},
+            "files": []
+        }))
+            .expect("test JSON should deserialize")
+    }
+
+    #[test]
+    fn accepts_supported_index() {
+        let index = index_with(1, "minecraft");
+
+        assert!(index.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_unsupported_format_version() {
+        let index = index_with(2, "minecraft");
+
+        assert!(index.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_unsupported_game() {
+        let index = index_with(1, "some-other-game");
+
+        assert!(index.validate().is_err());
     }
 }
